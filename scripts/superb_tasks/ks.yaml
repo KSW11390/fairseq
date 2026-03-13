@@ -1,0 +1,10 @@
+# SUPERB — Keyword Spotting (KS)
+# Downstream: speech_commands
+# Train: 200k steps | Eval: dev-best from training log | Metric: Acc (higher is better)
+# Note: s3prl evaluate mode for KS is unreliable; use training-time test score at dev-best step.
+
+downstream: speech_commands
+downstream_config: speech_commands.yaml
+train_steps: 200000
+metric: acc
+metric_direction: higher  # higher Acc = better

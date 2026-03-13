@@ -1,0 +1,119 @@
+# @package _group_
+#
+# Codebook Distillation: Student pretraining with EMA codebook targets.
+#
+# Teacher:  HuBERT-base (12L/768D, ~95M) — frozen
+# Codebook: Layer 8 → K=4096 (fine), Layer 9 → K=32 (coarse)
+# Student:  12L/384D (~27M) — same architecture as DICEHuBERT experiment
+# Labels:   Pre-computed codebook assignments (2 label sets: km_a + km_b)
+# Loss:     CE on masked positions for each codebook (standard HuBERT)
+# Data:     train-clean-100 (100h)
+#
+# Pipeline:
+#   1) python scripts/train_codebooks.py  → saves codebooks_latest.pt
+#   2) python scripts/apply_codebooks.py  → saves train.km_a, train.km_b
+#   3) Train with this config (no teacher needed during student training)
+
+common:
+  fp16: true
+  log_format: json
+  log_interval: 100
+  seed: 1337
+  tensorboard_logdir: tblog
+
+checkpoint:
+  save_interval_updates: 5000
+  keep_interval_updates: 2
+  no_epoch_checkpoints: true
+
+distributed_training:
+  ddp_backend: legacy_ddp
+  distributed_world_size: 1
+  distributed_port: 29672
+  nprocs_per_node: 1
+  find_unused_parameters: true
+
+task:
+  _name: hubert_pretraining
+  data: ???                   # Path to dir containing train.tsv, valid.tsv
+  label_dir: ???              # Path to dir containing train.km_a, train.km_b, etc.
+  labels:
+    - km_a                    # Codebook A labels (K=4096, layer 8)
+    - km_b                    # Codebook B labels (K=32,   layer 9)
+  label_rate: 50
+  sample_rate: 16000
+  max_sample_size: 250000
+  min_sample_size: 32000
+  pad_audio: false
+  random_crop: true
+  normalize: false
+
+dataset:
+  num_workers: 4
+  max_tokens: 1000000
+  skip_invalid_size_inputs_valid_test: true
+  validate_interval: 5
+  validate_interval_updates: 2000
+
+# Standard HuBERT criterion — no teacher needed (labels pre-computed)
+criterion:
+  _name: hubert
+  pred_masked_weight: 1.0
+  pred_nomask_weight: 0.0
+  loss_weights: [10.0]        # features_pen weight (same as DICEHuBERT)
+  log_keys: []
+
+optimization:
+  max_update: 10000           # Match DICEHuBERT baseline; increase to 100k for fair comparison
+  lr: [0.0005]
+  clip_norm: 10.0
+
+optimizer:
+  _name: adam
+  adam_betas: (0.9, 0.98)
+  adam_eps: 1.0e-06
+  weight_decay: 0.01
+
+lr_scheduler:
+  _name: polynomial_decay
+  warmup_updates: 3200
+
+model:
+  _name: hubert
+  label_rate: 50
+  skip_masked: false
+  skip_nomask: false
+  mask_prob: 0.80
+  extractor_mode: default
+  # CNN: MUST match teacher stride for time-alignment
+  conv_feature_layers: '[(512,10,5)] + [(512,3,2)] * 4 + [(512,2,2)] * 2'
+  # Student: 12L/384D (~27M params)
+  encoder_layers: 12
+  encoder_embed_dim: 384
+  encoder_ffn_embed_dim: 1536
+  encoder_attention_heads: 6
+  final_dim: 256
+  encoder_layerdrop: 0.05
+  dropout_input: 0.1
+  dropout_features: 0.1
+  dropout: 0.1
+  attention_dropout: 0.1
+  feature_grad_mult: 0.1
+  untie_final_proj: true      # Separate projection head per label set
+  activation_dropout: 0.0
+
+hydra:
+  job:
+    config:
+      override_dirname:
+        kv_sep: '-'
+        item_sep: '__'
+        exclude_keys:
+          - run
+          - task.data
+          - task.label_dir
+  run:
+    dir: ???
+  sweep:
+    dir: ???
+    subdir: ${hydra.job.config_name}__${hydra.job.override_dirname}

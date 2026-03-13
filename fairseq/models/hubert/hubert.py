@@ -243,6 +243,18 @@ class HubertConfig(FairseqDataclass):
     )
     fp16: bool = field(default=False, metadata={"help": "If fp16 is being used"})
 
+    # Layer-wise classification distillation
+    layerwise_cls_specs: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Per-layer classifier specs for layer-wise classification distillation. "
+            "Format: 'layer:K,...'  e.g. '1:32,1:512,...,12:32,12:512'. "
+            "Each entry creates a Linear(encoder_embed_dim, K) head. "
+            "Used together with hubert_layerwise criterion. "
+            "Default None = disabled (existing HuBERT behaviour unchanged)."
+        },
+    )
+
 
 @register_model("hubert", dataclass=HubertConfig)
 class HubertModel(BaseFairseqModel):
@@ -327,6 +339,25 @@ class HubertModel(BaseFairseqModel):
                 torch.FloatTensor(sum(self.num_classes), final_dim)
             )
             nn.init.uniform_(self.label_embs_concat)
+
+        # Layer-wise classification heads (optional, for hubert_layerwise criterion).
+        # One Linear per (layer, K) spec.  Key format: "l{layer}k{K}".
+        # Backward-compatible: None when layerwise_cls_specs is not set.
+        if getattr(cfg, "layerwise_cls_specs", None):
+            specs = [
+                (int(l), int(k))
+                for s in cfg.layerwise_cls_specs.split(",")
+                for l, k in [s.strip().split(":")]
+            ]
+            self.layer_classifiers = nn.ModuleDict({
+                f"l{layer}k{k}": nn.Linear(cfg.encoder_embed_dim, k, bias=False)
+                for layer, k in specs
+            })
+            logger.info(
+                f"Layer-wise classifiers: {list(self.layer_classifiers.keys())}"
+            )
+        else:
+            self.layer_classifiers = None
 
     def upgrade_state_dict_named(self, state_dict, name):
         """Upgrade a (possibly old) state dict for new versions of fairseq."""
@@ -423,6 +454,8 @@ class HubertModel(BaseFairseqModel):
         features: torch.Tensor,
         padding_mask: torch.Tensor,
     ) -> torch.Tensor:
+        if features.size(1) == 0:
+            return padding_mask.new_ones(padding_mask.size(0), 0, dtype=torch.bool)
         extra = padding_mask.size(1) % features.size(1)
         if extra > 0:
             padding_mask = padding_mask[:, :-extra]
@@ -444,7 +477,11 @@ class HubertModel(BaseFairseqModel):
         if target_list is not None:
             features, target_list = self.forward_targets(features, target_list)
 
-        features_pen = features.float().pow(2).mean()
+        # Guard: empty features (feat_tsz=0) cause .mean() to return NaN
+        if features.numel() > 0:
+            features_pen = features.float().pow(2).mean()
+        else:
+            features_pen = features.new_zeros([])
 
         features = features.transpose(1, 2)
         features = self.layer_norm(features)

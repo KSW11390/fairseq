@@ -368,6 +368,67 @@ class MultiheadAttention(FairseqIncrementalDecoder):
         )
         return k, v, key_padding_mask, attn_mask
 
+    # Whether F.scaled_dot_product_attention is available (PyTorch >= 2.0)
+    _sdpa_available: bool = hasattr(F, "scaled_dot_product_attention")
+
+    def _sdpa_attn_forward(
+        self,
+        query: Tensor,
+        key: Optional[Tensor],
+        value: Optional[Tensor],
+        key_padding_mask: Optional[Tensor],
+        attn_mask: Optional[Tensor],
+        bsz: int,
+        src_len: int,
+        tgt_len: int,
+    ) -> Tuple[Tensor, None]:
+        """FlashAttention-compatible path via F.scaled_dot_product_attention.
+
+        Only called when need_weights=False, bias_k/v=None, add_zero_attn=False,
+        and not encoder_decoder_attention.  No new packages required — PyTorch 2.x
+        dispatches to FlashAttention when dtype is float16/bfloat16 and head_dim
+        is 64 or 128.
+        """
+        q = self.q_proj(query)
+        k = self.k_proj(key)
+        v = self.v_proj(value)
+
+        # [T, B, E] -> [B, H, T, Dh]
+        q = q.view(tgt_len, bsz, self.num_heads, self.head_dim).permute(1, 2, 0, 3)
+        k = k.view(src_len, bsz, self.num_heads, self.head_dim).permute(1, 2, 0, 3)
+        v = v.view(src_len, bsz, self.num_heads, self.head_dim).permute(1, 2, 0, 3)
+
+        # Build a single additive float mask [B, 1, T, S] (or None)
+        merged_mask: Optional[Tensor] = None
+        if attn_mask is not None:
+            # attn_mask: [T, S] or [B*H, T, S] — reshape to [1, 1, T, S]
+            m = attn_mask
+            while m.dim() < 4:
+                m = m.unsqueeze(0)
+            merged_mask = m.to(dtype=q.dtype)
+        if key_padding_mask is not None:
+            # key_padding_mask: [B, S] bool/byte — True means *ignore*
+            pad = key_padding_mask.bool().unsqueeze(1).unsqueeze(2)  # [B, 1, 1, S]
+            pad_f = torch.zeros(
+                bsz, 1, 1, src_len, dtype=q.dtype, device=q.device
+            ).masked_fill_(pad, float("-inf"))
+            merged_mask = pad_f if merged_mask is None else merged_mask + pad_f
+
+        dropout_p = self.dropout_module.p if self.training else 0.0
+        attn_out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=merged_mask,
+            dropout_p=dropout_p,
+        )
+        # [B, H, T, Dh] -> [T, B, E]
+        attn_out = (
+            attn_out.permute(2, 0, 1, 3)
+            .contiguous()
+            .view(tgt_len, bsz, self.embed_dim)
+        )
+        attn_out = self.out_proj(attn_out)
+        return attn_out, None
+
     def _xformers_attn_forward(
         self,
         query,
@@ -533,6 +594,21 @@ class MultiheadAttention(FairseqIncrementalDecoder):
             if self.use_xformers:
                 return self._xformers_attn_forward(
                     query, key, value, key_padding_mask, need_weights, attn_mask
+                )
+
+            # SDPA / FlashAttention path (PyTorch >= 2.0, no extra packages)
+            # Activates when need_weights=False and no special features are used.
+            elif (
+                self._sdpa_available
+                and not need_weights
+                and self.bias_k is None
+                and self.bias_v is None
+                and not self.add_zero_attn
+                and not self.encoder_decoder_attention
+            ):
+                return self._sdpa_attn_forward(
+                    query, key, value, key_padding_mask, attn_mask,
+                    bsz, src_len, tgt_len,
                 )
 
             else:

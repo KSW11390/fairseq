@@ -1,0 +1,115 @@
+# @package _group_
+#
+# DICEHuBERT-style Hard CE Distillation — k-means k=500, NO MASKING
+# Student layer 12 supervised by teacher HuBERT-Base layer 9 k-means k=500 labels.
+# Loss is computed on ALL non-padding frames (loss_on_all_frames=true).
+# Compare with exp_nomask_* (RepCodec layer-wise) to isolate codebook type effect.
+#
+# Usage:
+#   fairseq-hydra-train \
+#     --config-dir examples/hubert/config/pretrain \
+#     --config-name hubert_nomask_k500 \
+#     task.data=/workspace/data/manifests \
+#     task.label_dir=/workspace/labels \
+#     hydra.run.dir=/workspace/exp_nomask_k500
+
+common:
+  fp16: true
+  log_format: json
+  log_interval: 100
+  seed: 1337
+  tensorboard_logdir: tblog
+
+checkpoint:
+  save_interval_updates: 2000
+  keep_interval_updates: 2
+  no_epoch_checkpoints: true
+
+distributed_training:
+  ddp_backend: legacy_ddp
+  distributed_world_size: 1
+  distributed_port: 29678
+  nprocs_per_node: 1
+  find_unused_parameters: true
+
+task:
+  _name: hubert_pretraining
+  data: ???
+  label_dir: ???
+  labels:
+    - l9k500
+  label_rate: 50
+  sample_rate: 16000
+  max_sample_size: 250000
+  min_sample_size: 32000
+  pad_audio: false
+  random_crop: true
+  normalize: false
+
+dataset:
+  num_workers: 4
+  max_tokens: 1000000
+  skip_invalid_size_inputs_valid_test: true
+  validate_interval: 5
+  validate_interval_updates: 5000
+
+criterion:
+  _name: hubert_layerwise
+  layer_specs: "12:l9k500"
+  layer_weights: null
+  pred_masked_weight: 1.0
+  loss_on_all_frames: true
+
+optimization:
+  max_update: 100000
+  lr: [0.0005]
+  clip_norm: 10.0
+
+optimizer:
+  _name: adam
+  adam_betas: (0.9, 0.98)
+  adam_eps: 1.0e-06
+  weight_decay: 0.01
+
+lr_scheduler:
+  _name: polynomial_decay
+  warmup_updates: 8000
+
+model:
+  _name: hubert
+  label_rate: 50
+  skip_masked: true
+  skip_nomask: true
+  mask_prob: 0.0
+  extractor_mode: default
+  conv_feature_layers: '[(512,10,5)] + [(512,3,2)] * 4 + [(512,2,2)] * 2'
+  encoder_layers: 12
+  encoder_embed_dim: 384
+  encoder_ffn_embed_dim: 1536
+  encoder_attention_heads: 6
+  final_dim: 256
+  encoder_layerdrop: 0.0
+  dropout_input: 0.1
+  dropout_features: 0.1
+  dropout: 0.1
+  attention_dropout: 0.1
+  feature_grad_mult: 0.1
+  untie_final_proj: true
+  activation_dropout: 0.0
+  layerwise_cls_specs: "9:500"
+
+hydra:
+  job:
+    config:
+      override_dirname:
+        kv_sep: '-'
+        item_sep: '__'
+        exclude_keys:
+          - run
+          - task.data
+          - task.label_dir
+  run:
+    dir: ???
+  sweep:
+    dir: ???
+    subdir: ${hydra.job.config_name}__${hydra.job.override_dirname}

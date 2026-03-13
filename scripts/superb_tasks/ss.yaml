@@ -1,0 +1,10 @@
+# SUPERB — Speech Separation (SS)
+# Downstream: separation_stft2 (v2), Libri2Mix 2-spk 16kHz min
+# Train: 150k steps | Eval: best-states-dev.ckpt | Metric: SI-SDR (higher is better)
+
+downstream: separation_stft2
+downstream_config: configs/cfg.yaml
+train_steps: 150000
+metric: si_sdr
+metric_direction: higher
+best_ckpt_name: best-states-dev.ckpt

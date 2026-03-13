@@ -28,6 +28,15 @@ from fairseq.dataclass.constants import (
 class FairseqDataclass:
     """fairseq base dataclass that supported fetching attributes and metas"""
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Python 3.11+ raises ValueError when a dataclass field's default value
+        # has __hash__ = None (set by @dataclass when eq=True, frozen=False).
+        # Adding __hash__ here before @dataclass runs prevents it from being
+        # overridden to None, allowing direct Config() instances as defaults.
+        if "__hash__" not in cls.__dict__:
+            cls.__hash__ = object.__hash__
+
     _name: Optional[str] = None
 
     @staticmethod

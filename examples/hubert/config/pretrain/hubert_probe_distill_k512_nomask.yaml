@@ -1,0 +1,126 @@
+# @package _group_
+#
+# Soft KL Distillation — K=512 probe, NO masking
+# Teacher's last layer (12th) → linear probe → soft labels over K=512 codebook entries
+# Student's last layer → l12k512 head → KL divergence against soft labels (ALL frames)
+#
+# mask_prob=0.0: no masking; loss_on_all_frames=true: KL on all non-padding frames
+# temperature=2.0: softer distribution (Hinton 2015)
+#
+# Usage:
+#   fairseq-hydra-train \
+#     --config-dir examples/hubert/config/pretrain \
+#     --config-name hubert_probe_distill_k512_nomask \
+#     task.data=/workspace/data/manifests \
+#     task.label_dir=/workspace/labels \
+#     criterion.teacher_path=/workspace/checkpoints/hubert_base_ls960.pt \
+#     criterion.probe_k512_path=/workspace/teacher_probe/probe_k512.pt \
+#     hydra.run.dir=/workspace/exp_soft_k512
+
+common:
+  fp16: true
+  log_format: json
+  log_interval: 100
+  seed: 1337
+  tensorboard_logdir: tblog
+
+checkpoint:
+  save_interval_updates: 10000
+  keep_interval_updates: 2
+  no_epoch_checkpoints: true
+
+distributed_training:
+  ddp_backend: legacy_ddp
+  distributed_world_size: 1
+  distributed_port: 29677
+  nprocs_per_node: 1
+  find_unused_parameters: true
+
+task:
+  _name: hubert_pretraining
+  data: ???
+  label_dir: ???
+  # Dummy label — only used for data loading, not for loss.
+  labels:
+    - l6k512
+  label_rate: 50
+  sample_rate: 16000
+  max_sample_size: 250000
+  min_sample_size: 32000
+  pad_audio: false
+  random_crop: true
+  normalize: false
+
+dataset:
+  num_workers: 4
+  max_tokens: 250000
+  skip_invalid_size_inputs_valid_test: true
+  validate_interval: 5
+  validate_interval_updates: 5000
+
+criterion:
+  _name: hubert_probe_distill
+  teacher_path: ???
+  probe_k32_path: null
+  probe_k512_path: ???
+  probe_specs: "512"
+  temperature: 2.0
+  teacher_fp16: false
+  pred_masked_weight: 1.0
+  loss_on_all_frames: true
+
+optimization:
+  max_update: 100000
+  lr: [0.0005]
+  clip_norm: 10.0
+
+optimizer:
+  _name: adam
+  adam_betas: (0.9, 0.98)
+  adam_eps: 1.0e-06
+  weight_decay: 0.01
+
+lr_scheduler:
+  _name: polynomial_decay
+  warmup_updates: 8000
+
+model:
+  _name: hubert
+  label_rate: 50
+  skip_masked: true
+  skip_nomask: true
+  mask_prob: 0.0
+  extractor_mode: default
+  conv_feature_layers: '[(512,10,5)] + [(512,3,2)] * 4 + [(512,2,2)] * 2'
+  encoder_layers: 12
+  encoder_embed_dim: 384
+  encoder_ffn_embed_dim: 1536
+  encoder_attention_heads: 6
+  final_dim: 256
+  encoder_layerdrop: 0.05
+  dropout_input: 0.1
+  dropout_features: 0.1
+  dropout: 0.1
+  attention_dropout: 0.1
+  feature_grad_mult: 0.1
+  untie_final_proj: true
+  activation_dropout: 0.0
+  layerwise_cls_specs: "12:512"
+
+hydra:
+  job:
+    config:
+      override_dirname:
+        kv_sep: '-'
+        item_sep: '__'
+        exclude_keys:
+          - run
+          - task.data
+          - task.label_dir
+          - criterion.teacher_path
+          - criterion.probe_k512_path
+  run:
+    dir: ???
+  sweep:
+    dir: ???
+    subdir: ${hydra.job.config_name}__${hydra.job.override_dirname}

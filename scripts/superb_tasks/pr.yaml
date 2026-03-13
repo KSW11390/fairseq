@@ -1,0 +1,10 @@
+# SUPERB — Phone Recognition (PR)
+# Upstream: customized_upstream (our UpstreamExpert wrapper)
+# Downstream: CTC on libriphone
+# Train: 100k steps | Eval: dev-best.ckpt | Metric: PER (lower is better)
+
+downstream: ctc
+downstream_config: libriphone.yaml
+train_steps: 100000
+metric: per
+metric_direction: lower  # lower PER = better

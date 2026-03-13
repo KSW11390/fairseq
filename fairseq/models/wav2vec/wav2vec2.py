@@ -1089,6 +1089,9 @@ class TransformerEncoder(nn.Module):
         min_layer=0,
         corpus_key=None,
     ):
+        # Guard: T=0 sequences (from forward_targets trimming) crash pos_conv
+        if x.size(1) == 0:
+            return x, []
 
         if padding_mask is not None:
             x = index_put(x, padding_mask, 0)

@@ -1,0 +1,9 @@
+# SUPERB — Automatic Speech Recognition (ASR)
+# Downstream: asr (CTC on LibriSpeech)
+# Train: 200k steps | Eval: dev-best.ckpt | Metric: WER (lower is better)
+
+downstream: asr
+downstream_config: librispeech.yaml
+train_steps: 200000
+metric: wer
+metric_direction: lower  # lower WER = better

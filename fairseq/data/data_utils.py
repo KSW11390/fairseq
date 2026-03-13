@@ -463,6 +463,10 @@ def compute_mask_indices(
         else:
             sz = all_sz
 
+        if sz == 0:
+            mask_idcs.append(np.array([], dtype=np.int64))
+            continue
+
         if num_mask_ver == 1:
             if padding_mask is not None:
                 num_mask = int(
@@ -552,13 +556,8 @@ def compute_mask_indices(
 
         mask_idc = np.unique(mask_idc[mask_idc < sz])
         if len(mask_idc) >= sz:
-            raise ValueError(
-                (
-                    f"the entire sequence is masked. "
-                    f"sz={sz}; mask_idc[mask_idc]; "
-                    f"index={indices[i] if indices is not None else None}"
-                )
-            )
+            # Sequence too short to have any unmasked frame; keep all but last.
+            mask_idc = mask_idc[: sz - 1]
         mask_idcs.append(mask_idc)
 
     target_len = None

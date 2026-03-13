@@ -197,7 +197,7 @@ class TransformerConfig(FairseqDataclass):
         default=False, metadata={"help": "perform cross+self-attention"}
     )
     # args for Training with Quantization Noise for Extreme Model Compression ({Fan*, Stock*} et al., 2020)
-    quant_noise: QuantNoiseConfig = field(default=QuantNoiseConfig())
+    quant_noise: QuantNoiseConfig = QuantNoiseConfig()
     min_params_to_wrap: int = field(
         default=DEFAULT_MIN_PARAMS_TO_WRAP,
         metadata={

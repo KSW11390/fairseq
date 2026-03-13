@@ -1,0 +1,129 @@
+# @package _group_
+#
+# DICEHuBERT-style distillation — teacher layer 9, k-means k=500
+#
+# Student layer 12 predicts teacher layer-9 k-means cluster IDs (k=500)
+# at 8% masked positions (mask_length=10 frames).
+#
+# layerwise_cls_specs = "9:500" creates layer_classifiers["l9k500"] = Linear(384, 500).
+# criterion layer_specs = "12:l9k500" hooks student layer 12 and uses that classifier.
+# The layer number "9" in layerwise_cls_specs only affects the classifier key name.
+#
+# Label files required:
+#   train.l9k500, valid.l9k500, dict.l9k500.txt
+#   (generated via simple_kmeans/dump_hubert_feature.py + learn_kmeans.py + dump_km_label.py)
+#
+# Usage:
+#   fairseq-hydra-train \
+#     --config-dir examples/hubert/config/pretrain \
+#     --config-name hubert_dicehubert_k500 \
+#     task.data=/workspace/data/manifests \
+#     task.label_dir=/workspace/labels \
+#     hydra.run.dir=/workspace/exp_dice_k500
+
+common:
+  fp16: false
+  bf16: true
+  log_format: json
+  log_interval: 100
+  seed: 1337
+  tensorboard_logdir: tblog
+
+checkpoint:
+  save_interval_updates: 10000
+  keep_interval_updates: 2
+  no_epoch_checkpoints: true
+
+distributed_training:
+  ddp_backend: legacy_ddp
+  distributed_world_size: 1
+  distributed_port: 29676
+  nprocs_per_node: 1
+  find_unused_parameters: true
+
+task:
+  _name: hubert_pretraining
+  data: ???
+  label_dir: ???
+  labels:
+    - l9k500
+  label_rate: 50
+  sample_rate: 16000
+  max_sample_size: 250000
+  min_sample_size: 32000
+  pad_audio: false
+  random_crop: true
+  normalize: false
+
+dataset:
+  num_workers: 4
+  max_tokens: 1000000
+  skip_invalid_size_inputs_valid_test: true
+  validate_interval: 5
+  validate_interval_updates: 5000
+
+criterion:
+  _name: hubert_layerwise
+  # Student layer 12 → l9k500 (teacher layer 9, k=500 k-means)
+  layer_specs: "12:l9k500"
+  layer_weights: null
+  pred_masked_weight: 1.0
+  loss_on_all_frames: false
+
+optimization:
+  max_update: 100000
+  lr: [0.0005]
+  clip_norm: 10.0
+
+optimizer:
+  _name: adam
+  adam_betas: (0.9, 0.98)
+  adam_eps: 1.0e-06
+  weight_decay: 0.01
+
+lr_scheduler:
+  _name: polynomial_decay
+  warmup_updates: 8000
+
+model:
+  _name: hubert
+  label_rate: 50
+  # Skip base HuBERT NCE (not needed — criterion uses layerwise CE only)
+  skip_masked: true
+  skip_nomask: true
+  # 8% masking, span=10 frames
+  mask_prob: 0.08
+  mask_length: 10
+  extractor_mode: default
+  conv_feature_layers: '[(512,10,5)] + [(512,3,2)] * 4 + [(512,2,2)] * 2'
+  encoder_layers: 12
+  encoder_embed_dim: 384
+  encoder_ffn_embed_dim: 1536
+  encoder_attention_heads: 6
+  final_dim: 256
+  encoder_layerdrop: 0.05
+  dropout_input: 0.1
+  dropout_features: 0.1
+  dropout: 0.1
+  attention_dropout: 0.1
+  feature_grad_mult: 0.1
+  untie_final_proj: true
+  activation_dropout: 0.0
+  # Creates layer_classifiers["l9k500"] = Linear(384, 500)
+  layerwise_cls_specs: "9:500"
+
+hydra:
+  job:
+    config:
+      override_dirname:
+        kv_sep: '-'
+        item_sep: '__'
+        exclude_keys:
+          - run
+          - task.data
+          - task.label_dir
+  run:
+    dir: ???
+  sweep:
+    dir: ???
+    subdir: ${hydra.job.config_name}__${hydra.job.override_dirname}

@@ -1,0 +1,151 @@
+# @package _group_
+#
+# Layer-wise Classification Distillation Student (12L/384D)
+#
+# Architecture:
+#   Student: 12-layer Transformer, 384-dim (~27M params, 3.5× compression from teacher 95M)
+#   Teacher: HuBERT Base (12L/768D), layers 1-12
+#   Codebooks: RepCodec (Encoder→EMA VQ→Decoder), K=32 + K=512 per layer
+#              → 24 codebooks total, pre-computed via train_codebooks.py + apply_codebooks.py
+#
+# Loss: Layer-wise Cross-Entropy (hubert_layerwise criterion)
+#   student_layer_L_output[mask] → Linear(384, K) → CE against label_lLkK[mask]
+#   Summed uniformly across all 24 (layer, K) pairs at masked positions.
+#
+# Label files required (generate with apply_codebooks.py):
+#   train.l1k32, train.l1k512, ..., train.l12k32, train.l12k512
+#   valid.l1k32, valid.l1k512, ..., valid.l12k32, valid.l12k512
+#
+# Usage:
+#   fairseq-hydra-train \
+#     --config-dir examples/hubert/config/pretrain \
+#     --config-name hubert_layerwise_distill \
+#     task.data=/path/to/data \
+#     task.label_dir=/path/to/labels \
+#     hydra.run.dir=/path/to/output
+
+common:
+  fp16: true
+  log_format: json
+  log_interval: 100
+  seed: 1337
+  tensorboard_logdir: tblog
+
+checkpoint:
+  save_interval_updates: 10000
+  keep_interval_updates: 2
+  no_epoch_checkpoints: true
+
+distributed_training:
+  ddp_backend: legacy_ddp
+  distributed_world_size: 1
+  distributed_port: 29673
+  nprocs_per_node: 1
+  find_unused_parameters: true
+
+task:
+  _name: hubert_pretraining
+  data: ???
+  label_dir: ???
+  labels:
+    - l1k32
+    - l1k512
+    - l2k32
+    - l2k512
+    - l3k32
+    - l3k512
+    - l4k32
+    - l4k512
+    - l5k32
+    - l5k512
+    - l6k32
+    - l6k512
+    - l7k32
+    - l7k512
+    - l8k32
+    - l8k512
+    - l9k32
+    - l9k512
+    - l10k32
+    - l10k512
+    - l11k32
+    - l11k512
+    - l12k32
+    - l12k512
+  label_rate: 50
+  sample_rate: 16000
+  max_sample_size: 250000
+  min_sample_size: 32000
+  pad_audio: false
+  random_crop: true
+  normalize: false
+
+dataset:
+  num_workers: 4
+  max_tokens: 1000000
+  skip_invalid_size_inputs_valid_test: true
+  validate_interval: 5
+  validate_interval_updates: 5000
+
+criterion:
+  _name: hubert_layerwise
+  # layer:label_key — each entry maps a student layer to a pre-computed label set
+  layer_specs: "1:l1k32,1:l1k512,2:l2k32,2:l2k512,3:l3k32,3:l3k512,4:l4k32,4:l4k512,5:l5k32,5:l5k512,6:l6k32,6:l6k512,7:l7k32,7:l7k512,8:l8k32,8:l8k512,9:l9k32,9:l9k512,10:l10k32,10:l10k512,11:l11k32,11:l11k512,12:l12k32,12:l12k512"
+  # layer_weights: null → uniform (1.0 each)
+  layer_weights: null
+  pred_masked_weight: 1.0
+
+optimization:
+  max_update: 100000
+  lr: [0.0005]
+  clip_norm: 10.0
+
+optimizer:
+  _name: adam
+  adam_betas: (0.9, 0.98)
+  adam_eps: 1.0e-06
+  weight_decay: 0.01
+
+lr_scheduler:
+  _name: polynomial_decay
+  warmup_updates: 32000
+
+model:
+  _name: hubert
+  label_rate: 50
+  skip_masked: false
+  skip_nomask: false
+  mask_prob: 0.80
+  extractor_mode: default
+  conv_feature_layers: '[(512,10,5)] + [(512,3,2)] * 4 + [(512,2,2)] * 2'
+  encoder_layers: 12
+  encoder_embed_dim: 384
+  encoder_ffn_embed_dim: 1536
+  encoder_attention_heads: 6
+  final_dim: 256
+  encoder_layerdrop: 0.05
+  dropout_input: 0.1
+  dropout_features: 0.1
+  dropout: 0.1
+  attention_dropout: 0.1
+  feature_grad_mult: 0.1
+  untie_final_proj: true
+  activation_dropout: 0.0
+  # Layer-wise classifier heads: one Linear per (layer, K) spec
+  layerwise_cls_specs: "1:32,1:512,2:32,2:512,3:32,3:512,4:32,4:512,5:32,5:512,6:32,6:512,7:32,7:512,8:32,8:512,9:32,9:512,10:32,10:512,11:32,11:512,12:32,12:512"
+
+hydra:
+  job:
+    config:
+      override_dirname:
+        kv_sep: '-'
+        item_sep: '__'
+        exclude_keys:
+          - run
+          - task.data
+          - task.label_dir
+  run:
+    dir: ???
+  sweep:
+    dir: ???
+    subdir: ${hydra.job.config_name}__${hydra.job.override_dirname}

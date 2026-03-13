@@ -1,0 +1,8 @@
+# SUPERB — Speaker Identification (SID)
+# Downstream: voxceleb1 (speaker classification, 1251 speakers)
+# Train: 200k steps | Eval: dev-best from training log | Metric: Acc (higher is better)
+
+downstream: voxceleb1
+train_steps: 100000
+metric: acc
+metric_direction: higher
