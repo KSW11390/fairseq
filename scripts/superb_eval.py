@@ -185,7 +185,7 @@ def find_dev_best(log_path: str):
     return best_step, best_score
 
 
-def find_test_score_at_step(log_path: str, step: int, metric: str):
+def find_test_score_at_step(log_path: str, step: int):
     """
     Parse s3prl training log to find test score reported at a specific step.
     Returns float or None.
@@ -248,7 +248,7 @@ def run_task(task_name: str, args, gpu: int) -> dict:
     os.makedirs(exp_dir, exist_ok=True)
 
     log_path = os.path.join(exp_dir, "log.log")
-    result = {"task": task_name, "gpu": gpu}
+    result = {"task": task_name, "gpu": gpu, "metric": task_cfg["metric"]}
 
     # ---- Training --------------------------------------------------------
     logger.info(f"[{task_name}] Starting downstream training on GPU {gpu} ...")
@@ -299,7 +299,7 @@ def run_task(task_name: str, args, gpu: int) -> dict:
     result["dev_best_score"] = best_dev
 
     # ---- Training-time test score at dev-best ----------------------------
-    train_test_score = find_test_score_at_step(log_path, best_step, task_cfg["metric"])
+    train_test_score = find_test_score_at_step(log_path, best_step)
     if train_test_score is not None:
         result["test_score_from_train"] = train_test_score
         logger.info(
@@ -398,8 +398,7 @@ def main():
     print("-" * 60)
     for res in results:
         task = res["task"]
-        task_cfg = load_task_config(task)
-        metric = task_cfg["metric"].upper()
+        metric = res["metric"].upper()
         score = res.get("test_score")
         step = res.get("dev_best_step", "?")
         source = res.get("test_score_source", res.get("status", "?"))

@@ -19,6 +19,7 @@ Note on logit format:
 import logging
 import math
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -250,7 +251,7 @@ class HubertDistillCriterion(FairseqCriterion):
             ctx = (
                 torch.cuda.amp.autocast
                 if (self.teacher_fp16 and source.is_cuda)
-                else _nullcontext
+                else nullcontext
             )
             with ctx():
                 if self.label_mode == "soft_teacher_logits":
@@ -433,12 +434,13 @@ class HubertDistillCriterion(FairseqCriterion):
             if torch.is_tensor(extra_losses):
                 extra_losses = [extra_losses]
                 names = [names]
-            if len(self.loss_weights) == 1 and len(extra_losses) != 1:
-                self.loss_weights = [self.loss_weights[0]] * len(extra_losses)
-            assert len(extra_losses) == len(self.loss_weights), (
-                f"{len(extra_losses)}, {len(self.loss_weights)}"
+            weights = self.loss_weights
+            if len(weights) == 1 and len(extra_losses) != 1:
+                weights = [weights[0]] * len(extra_losses)
+            assert len(extra_losses) == len(weights), (
+                f"{len(extra_losses)}, {len(weights)}"
             )
-            for p, n, coef in zip(extra_losses, names, self.loss_weights):
+            for p, n, coef in zip(extra_losses, names, weights):
                 if coef != 0 and p is not None:
                     p = coef * p.float() * sample_size
                     loss += p
@@ -504,14 +506,14 @@ class HubertDistillCriterion(FairseqCriterion):
                 "ppl", lambda m: utils.get_perplexity(m["loss"].avg)
             )
 
-        if "masked_kl" in logging_outputs[0]:
+        if logging_outputs and "masked_kl" in logging_outputs[0]:
             kl_sum = sum(log.get("masked_kl", 0) for log in logging_outputs)
             metrics.log_scalar(
                 "masked_kl", kl_sum / sample_size / math.log(2),
                 sample_size, round=3,
             )
 
-        if "teacher_entropy" in logging_outputs[0]:
+        if logging_outputs and "teacher_entropy" in logging_outputs[0]:
             ent = sum(log.get("teacher_entropy", 0) for log in logging_outputs)
             metrics.log_scalar("teacher_entropy", ent / len(logging_outputs), round=3)
 
@@ -535,11 +537,3 @@ class HubertDistillCriterion(FairseqCriterion):
         return False
 
 
-class _nullcontext:
-    """Minimal no-op context manager."""
-
-    def __enter__(self):
-        return None
-
-    def __exit__(self, *args):
-        pass

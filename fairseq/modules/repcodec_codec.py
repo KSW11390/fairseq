@@ -21,7 +21,7 @@ References:
 """
 
 import logging
-from typing import Tuple
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
@@ -66,7 +66,7 @@ class ConvBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int,
                  num_residuals: int = 2, dilations: Tuple[int, ...] = (1, 3)):
         super().__init__()
-        layers: list[nn.Module] = [nn.Conv1d(in_channels, out_channels, kernel_size=1)]
+        layers: List[nn.Module] = [nn.Conv1d(in_channels, out_channels, kernel_size=1)]
         for d in dilations[:num_residuals]:
             layers.append(ResidualUnit(out_channels, dilation=d))
         self.net = nn.Sequential(*layers)
@@ -111,9 +111,12 @@ class RepCodecLayer(nn.Module):
         self.input_dim = input_dim
         self.code_dim = code_dim
         self.codebook_size = codebook_size
+        self._encode_dim = encode_dim
+        self._decode_dim = decode_dim
+        self._num_conv_layers = num_conv_layers
 
         # ---- Encoder (input_dim → encode_dim → code_dim) -----------------
-        enc_layers: list[nn.Module] = [
+        enc_layers: List[nn.Module] = [
             nn.Conv1d(input_dim, encode_dim, kernel_size=3, padding=1)
         ]
         for i in range(num_conv_layers):
@@ -132,7 +135,7 @@ class RepCodecLayer(nn.Module):
         )
 
         # ---- Decoder (code_dim → decode_dim → input_dim) ------------------
-        dec_layers: list[nn.Module] = [
+        dec_layers: List[nn.Module] = [
             nn.Conv1d(code_dim, decode_dim, kernel_size=3, padding=1)
         ]
         for i in range(num_conv_layers):
@@ -211,6 +214,9 @@ class RepCodecLayer(nn.Module):
                 "input_dim": self.input_dim,
                 "code_dim": self.code_dim,
                 "codebook_size": self.codebook_size,
+                "encode_dim": self._encode_dim,
+                "decode_dim": self._decode_dim,
+                "num_conv_layers": self._num_conv_layers,
                 "state_dict": self.state_dict(),
             },
             path,
@@ -218,13 +224,15 @@ class RepCodecLayer(nn.Module):
         logger.info(f"RepCodecLayer saved → {path}")
 
     @classmethod
-    def load(cls, path: str, device: str = "cpu", **kwargs) -> "RepCodecLayer":
+    def load(cls, path: str, device: str = "cpu") -> "RepCodecLayer":
         ckpt = torch.load(path, map_location=device)
         model = cls(
             input_dim=ckpt["input_dim"],
             codebook_size=ckpt["codebook_size"],
             code_dim=ckpt["code_dim"],
-            **kwargs,
+            encode_dim=ckpt.get("encode_dim", 256),
+            decode_dim=ckpt.get("decode_dim", 256),
+            num_conv_layers=ckpt.get("num_conv_layers", 2),
         )
         model.load_state_dict(ckpt["state_dict"])
         model.eval()

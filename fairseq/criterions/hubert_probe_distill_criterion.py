@@ -154,7 +154,8 @@ class HubertProbeDistillCriterion(FairseqCriterion):
         for k, path in self.probe_paths.items():
             logger.info(f"Loading probe K={k} from {path} ...")
             ckpt = torch.load(path, map_location="cpu")
-            probe = nn.Linear(768, k, bias=True)
+            in_features = ckpt["state_dict"]["weight"].shape[1]
+            probe = nn.Linear(in_features, k, bias=True)
             probe.load_state_dict(ckpt["state_dict"])
             probe.eval()
             for p in probe.parameters():
